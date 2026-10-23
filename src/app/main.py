@@ -19,6 +19,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
+from src.app.auth import init_auth_state, logout_user, render_login_page
 from src.data.make_dataset import generate_synthetic_data
 from src.data.person_store import (
     delete_person,
@@ -97,6 +98,14 @@ def main():
     """
     st.markdown(custom_css, unsafe_allow_html=True)
 
+    # -------------------------------------------------------------------------
+    # Authentication Check & Login Gate
+    # -------------------------------------------------------------------------
+    init_auth_state()
+    if not st.session_state["authenticated"]:
+        render_login_page()
+        st.stop()
+
     # Pre-seed sample persons if database is fresh
     seed_sample_persons()
 
@@ -133,6 +142,15 @@ def main():
     # Sidebar: MLOps Telemetry & System Info
     # -------------------------------------------------------------------------
     with st.sidebar:
+        user = st.session_state.get("user_profile")
+        if user:
+            st.markdown(f"### {user['avatar']} {user['name']}")
+            st.caption(f"**{user['role']}** &bull; `{user['badge']}`\n\nDept: *{user['dept']}*")
+            if st.button("🚪 Sign Out", key="btn_signout_sidebar", use_container_width=True):
+                logout_user()
+                st.rerun()
+            st.divider()
+
         st.title("🛡️ FraudShield MLOps")
         st.caption("Production Risk Scoring & Monitoring")
         st.divider()
@@ -179,8 +197,24 @@ def main():
         )
 
     # -------------------------------------------------------------------------
-    # Main Navigation Tabs
+    # Authenticated Session Banner & Main Navigation Tabs
     # -------------------------------------------------------------------------
+    active_user = st.session_state.get("user_profile", {})
+    st.markdown(
+        f"""
+        <div style="display: flex; justify-content: space-between; align-items: center; background: #1e293b; padding: 0.75rem 1.25rem; border-radius: 10px; margin-bottom: 1.5rem; border: 1px solid #334155;">
+            <div>
+                <span style="font-weight: 700; color: #f8fafc;">Operator: {active_user.get('name', 'Analyst')}</span> &bull; 
+                <span style="color: #38bdf8;">{active_user.get('role', 'Risk Surveillance')}</span> ({active_user.get('dept', 'Operations')})
+            </div>
+            <div>
+                <span style="background: rgba(16, 185, 129, 0.2); color: #10b981; padding: 0.25rem 0.6rem; border-radius: 9999px; font-size: 0.75rem; font-weight: 700;">AUTHENTICATED SESSION</span>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
     (
         tab_scoring,
         tab_persons,
