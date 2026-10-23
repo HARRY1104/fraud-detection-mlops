@@ -1,6 +1,6 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
-from fastapi.responses import HTMLResponse
+from starlette.responses import HTMLResponse
 from pydantic import BaseModel
 
 from src.data.validate import TransactionSchema
