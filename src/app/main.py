@@ -339,7 +339,7 @@ def main():
                     key="input_ratio",
                 )
 
-                st.markdown("##### Authentication & Channel Flags")
+                st.markdown("##### Verification & Channel Flags")
                 f_c1, f_c2, f_c3 = st.columns(3)
                 used_chip = f_c1.checkbox(
                     "EMV Chip Used",
