@@ -1,12 +1,13 @@
 """Real-Time Fraud Detection MLOps - Streamlit Production Dashboard.
 
 Supports:
-1. Real-Time Single Transaction Scoring with Presets & Explainability
-2. Live Transaction Traffic Simulator (embedded real-time streaming)
-3. Batch Transaction Scoring (CSV upload or synthetic generation) & Export
-4. Production Data Drift Monitoring (Kolmogorov-Smirnov statistical tests & Plotly density plots)
-5. Model Performance & Live Retraining (ROC-AUC, Precision, Recall, F1)
-6. Live Session Telemetry & Audit Logs
+1. Real-Time Single Transaction Scoring with Cardholder Profiling & Explainability
+2. Individual Person Data Storage & Transaction Ledger (store_person_data)
+3. Live Transaction Traffic Simulator (embedded real-time streaming)
+4. Batch Transaction Scoring (CSV upload or synthetic generation) & Export
+5. Production Data Drift Monitoring (Kolmogorov-Smirnov statistical tests & Plotly density plots)
+6. Model Performance & Live Retraining (ROC-AUC, Precision, Recall, F1)
+7. Live Session Telemetry & Audit Logs
 """
 
 import random
@@ -19,6 +20,14 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from src.data.make_dataset import generate_synthetic_data
+from src.data.person_store import (
+    delete_person,
+    get_person_data,
+    list_all_persons,
+    seed_sample_persons,
+    store_person_data,
+    store_person_transaction,
+)
 from src.models.predict import FraudPredictor
 from src.models.train import MODEL_PATH, train_model
 from src.monitoring.drift_check import MONITORED_FEATURES, run_drift_check
@@ -87,6 +96,9 @@ def main():
     </style>
     """
     st.markdown(custom_css, unsafe_allow_html=True)
+
+    # Pre-seed sample persons if database is fresh
+    seed_sample_persons()
 
     # -------------------------------------------------------------------------
     # Session State Initialization
@@ -163,7 +175,7 @@ def main():
 
         st.divider()
         st.caption(
-            "**Stack:** Scikit-Learn • Random Forest • Kolmogorov-Smirnov Test • Streamlit"
+            "**Stack:** Scikit-Learn • Random Forest • SQLite Person Store • Streamlit"
         )
 
     # -------------------------------------------------------------------------
@@ -171,6 +183,7 @@ def main():
     # -------------------------------------------------------------------------
     (
         tab_scoring,
+        tab_persons,
         tab_sim,
         tab_batch,
         tab_drift,
@@ -179,6 +192,7 @@ def main():
     ) = st.tabs(
         [
             "🎯 Real-Time Scoring",
+            "👤 Cardholder Profiles",
             "⚡ Live Traffic Simulator",
             "📂 Batch Detection",
             "📈 Drift Monitoring",
@@ -193,8 +207,30 @@ def main():
     with tab_scoring:
         st.markdown("### Real-Time Transaction Risk Scoring")
         st.write(
-            "Evaluate individual transaction payloads against the trained ensemble model. Test standard profiles using the quick presets below."
+            "Evaluate individual transaction payloads against the trained ensemble model. Test standard profiles using the quick presets or link transactions to stored cardholders."
         )
+
+        # Cardholder Linking Selector
+        persons_list = list_all_persons()
+        person_choices = ["None (Guest / Manual Transaction)"] + [
+            f"{p['name']} ({p['person_id']}) - Median: ${p['median_purchase_price']:.2f}"
+            for p in persons_list
+        ]
+        selected_person_idx = st.selectbox(
+            "👤 Link Transaction to Individual Person (Optional)",
+            options=range(len(person_choices)),
+            format_func=lambda i: person_choices[i],
+            key="scoring_person_select",
+        )
+
+        selected_person = None
+        if selected_person_idx > 0:
+            selected_person = persons_list[selected_person_idx - 1]
+            st.info(
+                f"👤 Selected: **{selected_person['name']}** ({selected_person['person_id']}) | "
+                f"Home: {selected_person['home_address']} | Baseline Median Spend: **${selected_person['median_purchase_price']:.2f}** | "
+                f"Status: `{selected_person['risk_status']}`"
+            )
 
         st.markdown("##### ⚡ Quick Presets")
         col_p1, col_p2, col_p3, col_p4 = st.columns(4)
@@ -284,11 +320,18 @@ def main():
                     format="%.1f",
                     key="input_distance",
                 )
+
+                # If a person is selected, compute ratio dynamically from their profile
+                default_ratio = float(st.session_state["tx_ratio"])
+                if selected_person and selected_person.get("median_purchase_price", 0) > 0:
+                    computed_ratio = round(amount / selected_person["median_purchase_price"], 2)
+                    default_ratio = computed_ratio
+
                 ratio = r2_c2.number_input(
                     "Ratio to Median Spend",
                     min_value=0.01,
                     max_value=50.0,
-                    value=float(st.session_state["tx_ratio"]),
+                    value=default_ratio,
                     step=0.2,
                     format="%.2f",
                     help="Purchase price relative to customer's historical median spend.",
@@ -359,10 +402,19 @@ def main():
                     if is_fraud:
                         st.session_state["flagged_fraud_count"] += 1
 
+                    # If linked to an individual person, store the transaction in their ledger!
+                    if selected_person:
+                        store_person_transaction(
+                            selected_person["person_id"],
+                            {**payload, **result},
+                        )
+                        st.toast(f"Saved to {selected_person['name']}'s ledger!", icon="💾")
+
                     st.session_state["history"].insert(
                         0,
                         {
                             "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            "Cardholder": selected_person["name"] if selected_person else "Guest",
                             "Amount ($)": amount,
                             "Hour": hour,
                             "Distance (km)": distance,
@@ -451,7 +503,158 @@ def main():
                     st.info("No elevated risk anomalies detected. Standard spend profile.")
 
     # =========================================================================
-    # TAB 2: Live Transaction Traffic Simulator
+    # TAB 2: Individual Person Data Storage & Profiles
+    # =========================================================================
+    with tab_persons:
+        st.markdown("### 👤 Individual Cardholder Profile Storage")
+        st.write(
+            "Manage persistent cardholder profiles, baseline spend medians, and complete personal transaction ledgers stored via `store_person_data()`."
+        )
+
+        col_new_person, col_view_person = st.columns([1.1, 1.4], gap="large")
+
+        with col_new_person:
+            st.markdown("#### 📝 Store / Update Person Data")
+            with st.container(border=True):
+                p_c1, p_c2 = st.columns(2)
+                p_id = p_c1.text_input("Person / Customer ID", value="P-1005", key="person_in_id")
+                p_name = p_c2.text_input("Full Name", value="Alexander Wright", key="person_in_name")
+
+                p_c3, p_c4 = st.columns(2)
+                p_median = p_c3.number_input(
+                    "Median Purchase Price ($)",
+                    min_value=1.0,
+                    max_value=10000.0,
+                    value=65.0,
+                    step=5.0,
+                    key="person_in_median",
+                    help="Normal baseline median spending used to calculate risk ratio.",
+                )
+                p_status = p_c4.selectbox(
+                    "Account Status",
+                    ["ACTIVE", "UNDER_REVIEW", "BLOCKED"],
+                    key="person_in_status",
+                )
+
+                p_home = st.text_input("Home City / Address", value="Denver, CO", key="person_in_home")
+                p_email = st.text_input("Email Address", value="alex.wright@example.com", key="person_in_email")
+                p_phone = st.text_input("Phone Number", value="+1-555-0199", key="person_in_phone")
+
+                if st.button("💾 Store Person Data", type="primary", use_container_width=True, key="btn_save_person"):
+                    stored = store_person_data(
+                        person_id=p_id,
+                        name=p_name,
+                        median_purchase_price=p_median,
+                        home_address=p_home,
+                        email=p_email,
+                        phone=p_phone,
+                        risk_status=p_status,
+                    )
+                    st.success(f"✅ Successfully stored profile for **{stored['name']}** (`{stored['person_id']}`)!")
+                    st.rerun()
+
+        with col_view_person:
+            st.markdown("#### 📂 Stored Cardholder Directory")
+            all_persons = list_all_persons()
+            if all_persons:
+                df_persons = pd.DataFrame(all_persons)[
+                    [
+                        "person_id",
+                        "name",
+                        "home_address",
+                        "median_purchase_price",
+                        "risk_status",
+                        "total_transactions",
+                        "flagged_count",
+                        "total_spent",
+                    ]
+                ]
+                df_persons.columns = [
+                    "ID",
+                    "Name",
+                    "Home",
+                    "Median Spend ($)",
+                    "Status",
+                    "Total Tx",
+                    "Flagged",
+                    "Total Volume ($)",
+                ]
+                st.dataframe(df_persons, use_container_width=True)
+            else:
+                st.info("No cardholders stored yet. Use the form to save a person's profile.")
+
+        st.divider()
+
+        # Detailed Individual Person Dossier & Ledger
+        st.markdown("#### 🔍 Individual Cardholder Dossier & Transaction Ledger")
+        if all_persons:
+            selected_dossier_id = st.selectbox(
+                "Select Individual Cardholder to Inspect:",
+                options=[p["person_id"] for p in all_persons],
+                format_func=lambda pid: next(
+                    f"{p['name']} ({p['person_id']}) - Status: {p['risk_status']}"
+                    for p in all_persons
+                    if p["person_id"] == pid
+                ),
+                key="select_dossier_person",
+            )
+
+            person_dossier = get_person_data(selected_dossier_id, include_transactions=True)
+            if person_dossier:
+                st_c1, st_c2, st_c3, st_c4 = st.columns(4)
+                stats = person_dossier.get("stats", {})
+                st_c1.metric("Total Transactions", stats.get("total_transactions", 0))
+                st_c2.metric("Flagged Fraudulent", stats.get("flagged_transactions", 0))
+                st_c3.metric("Total Volume Spent", f"${stats.get('total_volume', 0.0):,.2f}")
+                st_c4.metric("Avg Transaction Spend", f"${stats.get('avg_spend', 0.0):,.2f}")
+
+                tx_records = person_dossier.get("transactions", [])
+                if tx_records:
+                    st.markdown(f"##### Transaction Ledger for {person_dossier['name']} ({len(tx_records)} records)")
+                    df_ledger = pd.DataFrame(tx_records)[
+                        [
+                            "timestamp",
+                            "transaction_amount",
+                            "transaction_hour",
+                            "distance_from_home",
+                            "ratio_to_median_purchase_price",
+                            "fraud_probability",
+                            "risk_tier",
+                            "is_fraud",
+                            "latency_ms",
+                        ]
+                    ]
+                    df_ledger.columns = [
+                        "Timestamp",
+                        "Amount ($)",
+                        "Hour",
+                        "Distance (km)",
+                        "Spend Ratio",
+                        "Fraud Prob",
+                        "Risk Tier",
+                        "Fraud Flag",
+                        "Latency (ms)",
+                    ]
+                    st.dataframe(df_ledger, use_container_width=True)
+
+                    csv_ledger = df_ledger.to_csv(index=False).encode("utf-8")
+                    st.download_button(
+                        f"📥 Export {person_dossier['name']}'s Statement",
+                        data=csv_ledger,
+                        file_name=f"{person_dossier['person_id']}_ledger.csv",
+                        mime="text/csv",
+                        key=f"dl_ledger_{person_dossier['person_id']}",
+                    )
+                else:
+                    st.info(f"No transactions recorded for {person_dossier['name']} yet. Use the 'Real-Time Scoring' tab to score and save transactions for this person.")
+
+                if st.button(f"🗑️ Delete Cardholder Profile ({person_dossier['name']})", key="btn_del_person"):
+                    delete_person(person_dossier["person_id"])
+                    st.warning(f"Deleted profile {person_dossier['person_id']}")
+                    st.rerun()
+
+    # =========================================================================
+    # TAB 3: Live Transaction Traffic Simulator
     # =========================================================================
     with tab_sim:
         st.markdown("### ⚡ Live Transaction Traffic Simulator")
@@ -474,7 +677,6 @@ def main():
             st.session_state["sim_log"] = []
             st.rerun()
 
-        # Telemetry placeholders
         sim_m1, sim_m2, sim_m3, sim_m4 = st.columns(4)
         m1_ph = sim_m1.empty()
         m2_ph = sim_m2.empty()
@@ -483,7 +685,6 @@ def main():
 
         table_ph = st.empty()
 
-        # Initialize telemetry display
         s_total = st.session_state["sim_total_req"]
         s_fraud = st.session_state["sim_total_fraud"]
         s_rate = (s_fraud / s_total * 100) if s_total > 0 else 0.0
@@ -499,7 +700,7 @@ def main():
             status_text = st.empty()
             status_text.info("Streaming simulated live transactions...")
 
-            for i in range(num_tx):
+            for _ in range(num_tx):
                 is_fraud_intent = (random.random() < (fraud_ratio / 100.0))
                 if is_fraud_intent:
                     tx_payload = {
@@ -545,7 +746,6 @@ def main():
                 if len(st.session_state["sim_log"]) > 15:
                     st.session_state["sim_log"].pop()
 
-                # Update live metrics
                 cur_total = st.session_state["sim_total_req"]
                 cur_fraud = st.session_state["sim_total_fraud"]
                 cur_rate = (cur_fraud / cur_total * 100) if cur_total > 0 else 0.0
@@ -554,7 +754,6 @@ def main():
                 m3_ph.metric("Live Fraud Rate", f"{cur_rate:.1f}%")
                 m4_ph.metric("Latest Latency", f"{lat_val} ms")
 
-                # Update table
                 df_stream = pd.DataFrame(st.session_state["sim_log"])
                 table_ph.dataframe(df_stream, use_container_width=True)
 
@@ -563,7 +762,7 @@ def main():
             status_text.success(f"Simulation completed! Processed {num_tx} transactions.")
 
     # =========================================================================
-    # TAB 3: Batch Fraud Detection
+    # TAB 4: Batch Fraud Detection
     # =========================================================================
     with tab_batch:
         st.markdown("### Batch Transaction Fraud Detection")
@@ -693,7 +892,7 @@ def main():
             )
 
     # =========================================================================
-    # TAB 4: Production Data Drift Monitoring
+    # TAB 5: Production Data Drift Monitoring
     # =========================================================================
     with tab_drift:
         st.markdown("### Production Data Drift Monitoring")
@@ -798,7 +997,7 @@ def main():
             st.plotly_chart(fig_drift, use_container_width=True)
 
     # =========================================================================
-    # TAB 5: Model Architecture & Retraining
+    # TAB 6: Model Architecture & Retraining
     # =========================================================================
     with tab_model:
         st.markdown("### Model Architecture & Lifecycle Management")
@@ -871,7 +1070,7 @@ def main():
         st.plotly_chart(fig_metrics, use_container_width=True)
 
     # =========================================================================
-    # TAB 6: Session Audit Log
+    # TAB 7: Session Audit Log
     # =========================================================================
     with tab_audit:
         st.markdown("### Session Audit Log")
