@@ -45,7 +45,6 @@ make run-api
 ```
 
 ## Features in Streamlit Dashboard
-- **🔐 Operator Authentication**: Role-based access control with pre-configured operator roles (`admin`, `analyst`, `auditor`) and quick one-click demo login buttons.
 - **🎯 Real-Time Scoring**: Score individual transactions with pre-configured scenarios (routine coffee, daytime grocery, midnight spree), cardholder profile linking, and instant explainability factor breakdown.
 - **👤 Cardholder Profiles**: Persistent SQLite storage for individual person profiles, spending baselines, and individual transaction ledgers.
 - **⚡ Live Traffic Simulator**: Stream synthetic live transaction feeds directly into the inference engine with live telemetry and animated logs.
@@ -54,9 +53,3 @@ make run-api
 - **🧠 Model Architecture & Retraining**: Real-time evaluation metrics (ROC-AUC, PR-AUC, F1) with one-click in-app model retraining.
 - **📜 Session Audit Log**: Full transaction history with telemetry metrics (fraud rate, latency, request volume).
 
-### Demo Login Credentials
-| Username | Password | Role | Clearance |
-| :--- | :--- | :--- | :--- |
-| `admin` | `admin123` | Fraud Operations Director | 🛡️ ADMIN (Full Access) |
-| `analyst` | `analyst123` | Senior Fraud Analyst | 🔍 ANALYST (Scoring & Ledgers) |
-| `auditor` | `auditor123` | Compliance Officer | ⚖️ AUDITOR (Audit & Drift) |

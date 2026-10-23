@@ -1,7 +1,6 @@
 """Real-time sliding window velocity calculator for transaction streams."""
 from datetime import datetime, timedelta
 from collections import defaultdict
-import numpy as np
 
 class TransactionVelocityStore:
     def __init__(self, window_minutes: int = 60):
