@@ -10,3 +10,5 @@ pytest>=8.0.0
 httpx>=0.26.0
 scipy>=1.11.0
 ruff>=0.3.0
+streamlit>=1.30.0
+plotly>=5.18.0

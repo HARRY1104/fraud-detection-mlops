@@ -1,6 +1,5 @@
 from pathlib import Path
 import numpy as np
-import pandas as pd
 from scipy.stats import ks_2samp
 from src.data.make_dataset import load_or_create_dataset
 
@@ -15,7 +14,7 @@ MONITORED_FEATURES = [
 ]
 
 
-def run_drift_check(alpha: float = 0.05) -> dict:
+def run_drift_check(alpha: float = 0.05, return_data: bool = False):
     """Compares reference training distribution against shifted production traffic using KS-test."""
     reference_df = load_or_create_dataset()
     current_df = reference_df.sample(n=min(1500, len(reference_df)), random_state=99).copy()
@@ -34,6 +33,8 @@ def run_drift_check(alpha: float = 0.05) -> dict:
             "ks_stat": round(float(stat), 4),
             "p_value": round(float(p_val), 6),
             "drift_detected": drifted,
+            "ref_mean": round(float(reference_df[col].mean()), 2),
+            "current_mean": round(float(current_df[col].mean()), 2),
         }
         badge = "<span style='color:#ef4444;font-weight:bold;'>DRIFT DETECTED</span>" if drifted else "<span style='color:#10b981;font-weight:bold;'>STABLE</span>"
         rows_html += f"<tr><td>{col}</td><td>{reference_df[col].mean():.2f}</td><td>{current_df[col].mean():.2f}</td><td>{stat:.4f}</td><td>{p_val:.6f}</td><td>{badge}</td></tr>"
@@ -63,6 +64,8 @@ def run_drift_check(alpha: float = 0.05) -> dict:
     DRIFT_REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
     DRIFT_REPORT_PATH.write_text(html_content, encoding="utf-8")
     print(f"Drift report generated at {DRIFT_REPORT_PATH}")
+    if return_data:
+        return results, reference_df, current_df
     return results
 
 

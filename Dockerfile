@@ -12,6 +12,6 @@ COPY . .
 
 RUN python -m src.models.train
 
-EXPOSE 8000
+EXPOSE 8501 8000
 
-CMD ["uvicorn", "src.app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["streamlit", "run", "app.py", "--server.port=8501", "--server.address=0.0.0.0"]
