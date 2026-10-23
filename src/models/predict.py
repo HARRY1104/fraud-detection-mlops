@@ -3,7 +3,8 @@ from pathlib import Path
 import joblib
 import pandas as pd
 from src.models.train import MODEL_PATH, train_model
-
+import shap
+import numpy as np
 
 class FraudPredictor:
     """Production inference wrapper for the serialized fraud detection pipeline."""
@@ -120,3 +121,28 @@ class FraudPredictor:
             })
 
         return factors
+
+class ExplainerService:
+    def __init__(self, model_pipeline):
+        # Extract the fitted tree classifier from pipeline
+        self.classifier = model_pipeline.named_steps["classifier"]
+        self.preprocessor = model_pipeline.named_steps["features"]
+        self.explainer = shap.TreeExplainer(self.classifier)
+
+    def explain_payload(self, df_raw):
+        transformed = self.preprocessor.transform(df_raw)
+        shap_values = self.explainer.shap_values(transformed)
+        
+        # For binary classification, inspect the positive (fraud) class
+        fraud_shap = shap_values[1][0] if isinstance(shap_values, list) else shap_values[0]
+        feature_names = self.preprocessor.get_feature_names_out()
+        
+        ranked_indices = np.argsort(np.abs(fraud_shap))[::-1]
+        top_reasons = []
+        for idx in ranked_indices[:3]:
+            top_reasons.append({
+                "feature": str(feature_names[idx]),
+                "impact": round(float(fraud_shap[idx]), 4),
+                "direction": "Risk Escalator" if fraud_shap[idx] > 0 else "Protective Factor",
+            })
+        return top_reasons
