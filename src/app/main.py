@@ -169,7 +169,7 @@ def main():
         if model_exists:
             st.success("✅ Model Pipeline: Active")
             mtime = datetime.fromtimestamp(MODEL_PATH.stat().st_mtime).strftime("%H:%M:%S")
-            st.caption(f"Artifact: `models/best_model.joblib`\nLast Updated: {mtime}")
+            st.caption(f"Last Updated: {mtime}")
         else:
             st.warning("⚠️ Model Artifact Missing")
 
