@@ -509,8 +509,7 @@ def main():
     with tab_persons:
         st.markdown("### 👤 Individual Cardholder Profile Storage")
         st.write(
-            "Manage persistent cardholder profiles, baseline spend medians, and complete personal transaction ledgers stored via `store_person_data()`."
-        )
+            "Manage persistent cardholder profiles, baseline spend medians, and complete personal transaction ledgers stored")
 
         col_new_person, col_view_person = st.columns([1.1, 1.4], gap="large")
 
